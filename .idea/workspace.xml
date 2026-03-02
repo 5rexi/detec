@@ -3,6 +3,7 @@
   <component name="ChangeListManager">
     <list default="true" id="03f357f8-c99e-4d05-8d47-cf59393a110f" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/annotate_helmet.py" beforeDir="false" afterPath="$PROJECT_DIR$/annotate_helmet.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/detect_helmet.py" beforeDir="false" afterPath="$PROJECT_DIR$/detect_helmet.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -61,7 +62,7 @@
       <workItem from="1770889528861" duration="2643000" />
       <workItem from="1772353187544" duration="7808000" />
       <workItem from="1772417349910" duration="4084000" />
-      <workItem from="1772430327859" duration="10165000" />
+      <workItem from="1772430327859" duration="12663000" />
     </task>
     <servers />
   </component>
