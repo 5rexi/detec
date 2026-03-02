@@ -1,5 +1,3 @@
-"""Backward-compatible entrypoint. Prefer detect_helmet.py."""
-
 from ppe.inference import run_video
 
 if __name__ == "__main__":

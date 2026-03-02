@@ -1,32 +1,30 @@
-import torch
-import torch.nn as nn
-from resnet import HeadHelmetResNet
-from resnet_data import generate_dataset
+"""Legacy entrypoint. Use train_helmet.py / train_vest.py for explicit task separation."""
 
-model = HeadHelmetResNet(num_classes=3).cuda()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=5e-4)
-weight = torch.tensor([4.0, 1.0, 1.0]).cuda()
-criterion = nn.CrossEntropyLoss(weight=weight)
-loader = generate_dataset(root='./dataset_cloth',
-                          batch_size=32)
+import argparse
 
-min_loss = 1000000
-for epoch in range(40):
-    model.train()
-    total_loss = 0.0
-    for imgs, labels in loader:
-        imgs = imgs.cuda()
-        labels = labels.cuda()
+from ppe.training import train_task
 
-        logits = model(imgs)
-        loss = criterion(logits, labels)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", choices=["helmet", "vest"], required=True)
+    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--class-weights", nargs="*", type=float, default=[1.0, 4.0, 1.0])
+    parser.add_argument("--false-violation-penalty", type=float, default=3.0)
+    parser.add_argument("--dataset-root", required=True)
+    parser.add_argument("--save-path", required=True)
+    args = parser.parse_args()
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    if total_loss < min_loss:
-        min_loss = total_loss
-        torch.save(model.state_dict(), './weights/resnet_model_cloth.pth')
-
-    print(f"Epoch {epoch}, loss = {total_loss:.4f}")
+    train_task(
+        task_name=args.task,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        class_weights=args.class_weights,
+        false_violation_penalty=args.false_violation_penalty,
+        dataset_root=args.dataset_root,
+        save_path=args.save_path,
+    )
