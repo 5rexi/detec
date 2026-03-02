@@ -46,34 +46,39 @@ def decide_frame_state(
 def update_track_state(
     track_scores,
     track_ok_streak,
+    track_ng_streak,
     track_id,
     frame_state,
     score_decay: float,
     score_step: float,
     trigger_score: float,
     clear_ok_streak: int,
+    min_violation_streak: int,
 ):
     """
     轨迹级证据累积：
     - NG 帧增加分数；
     - OK 帧衰减分数并累积 ok streak；
     - UNKNOWN 轻微衰减；
-    - 达到 trigger_score 才最终告警 NG。
+    - 达到 trigger_score 且连续 NG 帧数达到 min_violation_streak 才最终告警 NG。
     """
     if frame_state == STATE_NG:
         track_scores[track_id] = track_scores[track_id] * score_decay + score_step
         track_ok_streak[track_id] = 0
+        track_ng_streak[track_id] += 1
     elif frame_state == STATE_OK:
         track_scores[track_id] = max(0.0, track_scores[track_id] * 0.5)
         track_ok_streak[track_id] += 1
+        track_ng_streak[track_id] = 0
     else:
         track_scores[track_id] = track_scores[track_id] * 0.9
         track_ok_streak[track_id] = 0
+        track_ng_streak[track_id] = 0
 
     if track_ok_streak[track_id] >= clear_ok_streak:
         track_scores[track_id] = 0.0
 
-    if track_scores[track_id] >= trigger_score:
+    if track_scores[track_id] >= trigger_score and track_ng_streak[track_id] >= min_violation_streak:
         return STATE_NG
     if frame_state == STATE_OK:
         return STATE_OK
@@ -94,6 +99,7 @@ def run_video(
     score_step: float = 1.0,
     trigger_score: float = 1.0,
     clear_ok_streak: int = 3,
+    min_violation_streak: int = 3,
 ) -> None:
     task = TASKS[task_name]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,6 +129,7 @@ def run_video(
 
     track_scores = defaultdict(float)
     track_ok_streak = defaultdict(int)
+    track_ng_streak = defaultdict(int)
     violation_gallery = {}
 
     while cap.isOpened():
@@ -164,6 +171,7 @@ def run_video(
                     score_step=score_step,
                     trigger_score=trigger_score,
                     clear_ok_streak=clear_ok_streak,
+                    min_violation_streak=min_violation_streak,
                 )
 
                 if final_state == STATE_NG and track_id not in violation_gallery and crop is not None:
@@ -183,7 +191,7 @@ def run_video(
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(
                     frame,
-                    f"{text} ID:{track_id} S={track_scores[track_id]:.2f}",
+                    f"{text} ID:{track_id} S={track_scores[track_id]:.2f} NGst={track_ng_streak[track_id]}",
                     (x1, max(0, y1 - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -230,6 +238,7 @@ if __name__ == "__main__":
     parser.add_argument("--score-step", type=float, default=1.0)
     parser.add_argument("--trigger-score", type=float, default=1.0)
     parser.add_argument("--clear-ok-streak", type=int, default=3)
+    parser.add_argument("--min-violation-streak", type=int, default=3)
     args = parser.parse_args()
 
     task = TASKS[args.task]
@@ -247,4 +256,5 @@ if __name__ == "__main__":
         score_step=args.score_step,
         trigger_score=args.trigger_score,
         clear_ok_streak=args.clear_ok_streak,
+        min_violation_streak=args.min_violation_streak,
     )

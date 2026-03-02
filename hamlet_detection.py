@@ -11,5 +11,6 @@ if __name__ == "__main__":
         output_path="output_helmet.mp4",
         violation_threshold=0.95,
         trigger_score=1.0,
+        min_violation_streak=3,
         conf=0.5,
     )
