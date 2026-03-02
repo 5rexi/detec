@@ -1,5 +1,5 @@
 import argparse
-from collections import defaultdict, deque
+from collections import defaultdict
 
 import cv2
 import numpy as np
@@ -17,14 +17,65 @@ STATE_NG = 1
 STATE_UNKNOWN = 2
 
 
-def update_track_state(track_states, track_id, cls, time_window):
-    track_states[track_id].append(cls)
-    if len(track_states[track_id]) < time_window:
-        return STATE_UNKNOWN
+def decide_frame_state(
+    probs: torch.Tensor,
+    ok_threshold: float,
+    violation_threshold: float,
+    invalid_threshold: float,
+) -> int:
+    """
+    保守判违规策略：
+    - 违规必须达到更高阈值 violation_threshold 才算违规候选；
+    - 合规达到 ok_threshold 时可直接判合规；
+    - invalid 概率高时判未知；
+    - 其他情况一律 UNKNOWN，避免误报违规。
+    """
+    p_ok = probs[0].item()
+    p_ng = probs[1].item()
+    p_invalid = probs[2].item()
 
-    if all(c == STATE_NG for c in track_states[track_id]):
+    if p_invalid >= invalid_threshold:
+        return STATE_UNKNOWN
+    if p_ok >= ok_threshold:
+        return STATE_OK
+    if p_ng >= violation_threshold:
         return STATE_NG
-    if all(c == STATE_OK for c in track_states[track_id]):
+    return STATE_UNKNOWN
+
+
+def update_track_state(
+    track_scores,
+    track_ok_streak,
+    track_id,
+    frame_state,
+    score_decay: float,
+    score_step: float,
+    trigger_score: float,
+    clear_ok_streak: int,
+):
+    """
+    轨迹级证据累积：
+    - NG 帧增加分数；
+    - OK 帧衰减分数并累积 ok streak；
+    - UNKNOWN 轻微衰减；
+    - 达到 trigger_score 才最终告警 NG。
+    """
+    if frame_state == STATE_NG:
+        track_scores[track_id] = track_scores[track_id] * score_decay + score_step
+        track_ok_streak[track_id] = 0
+    elif frame_state == STATE_OK:
+        track_scores[track_id] = max(0.0, track_scores[track_id] * 0.5)
+        track_ok_streak[track_id] += 1
+    else:
+        track_scores[track_id] = track_scores[track_id] * 0.9
+        track_ok_streak[track_id] = 0
+
+    if track_ok_streak[track_id] >= clear_ok_streak:
+        track_scores[track_id] = 0.0
+
+    if track_scores[track_id] >= trigger_score:
+        return STATE_NG
+    if frame_state == STATE_OK:
         return STATE_OK
     return STATE_UNKNOWN
 
@@ -35,8 +86,14 @@ def run_video(
     yolo_weights: str,
     cls_weights: str,
     output_path: str,
-    time_window: int = 10,
     conf: float = 0.5,
+    ok_threshold: float = 0.6,
+    violation_threshold: float = 0.95,
+    invalid_threshold: float = 0.5,
+    score_decay: float = 0.8,
+    score_step: float = 1.0,
+    trigger_score: float = 1.0,
+    clear_ok_streak: int = 3,
 ) -> None:
     task = TASKS[task_name]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,7 +121,8 @@ def run_video(
         (frame_w + 220, frame_h),
     )
 
-    track_states = defaultdict(lambda: deque(maxlen=time_window))
+    track_scores = defaultdict(float)
+    track_ok_streak = defaultdict(int)
     violation_gallery = {}
 
     while cap.isOpened():
@@ -85,20 +143,28 @@ def run_video(
 
                 crop = task.crop_fn(frame, bbox)
                 if crop is None:
-                    cls = STATE_UNKNOWN
+                    frame_state = STATE_UNKNOWN
                 else:
                     tensor = transform(crop).unsqueeze(0).to(device)
                     with torch.no_grad():
-                        pred = classifier(tensor).argmax(1).item()
+                        probs = torch.softmax(classifier(tensor), dim=1).squeeze(0)
+                    frame_state = decide_frame_state(
+                        probs=probs,
+                        ok_threshold=ok_threshold,
+                        violation_threshold=violation_threshold,
+                        invalid_threshold=invalid_threshold,
+                    )
 
-                    if pred == 0:
-                        cls = STATE_OK
-                    elif pred == 1:
-                        cls = STATE_NG
-                    else:
-                        cls = STATE_UNKNOWN
-
-                final_state = update_track_state(track_states, track_id, cls, time_window)
+                final_state = update_track_state(
+                    track_scores=track_scores,
+                    track_ok_streak=track_ok_streak,
+                    track_id=track_id,
+                    frame_state=frame_state,
+                    score_decay=score_decay,
+                    score_step=score_step,
+                    trigger_score=trigger_score,
+                    clear_ok_streak=clear_ok_streak,
+                )
 
                 if final_state == STATE_NG and track_id not in violation_gallery and crop is not None:
                     violation_gallery[track_id] = crop
@@ -117,7 +183,7 @@ def run_video(
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(
                     frame,
-                    f"{text} ID:{track_id}",
+                    f"{text} ID:{track_id} S={track_scores[track_id]:.2f}",
                     (x1, max(0, y1 - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -156,8 +222,14 @@ if __name__ == "__main__":
     parser.add_argument("--yolo-weights", default="weights/yolo11n.pt")
     parser.add_argument("--cls-weights", default=None)
     parser.add_argument("--output", default="output.mp4")
-    parser.add_argument("--time-window", type=int, default=10)
     parser.add_argument("--conf", type=float, default=0.5)
+    parser.add_argument("--ok-threshold", type=float, default=0.6)
+    parser.add_argument("--violation-threshold", type=float, default=0.95)
+    parser.add_argument("--invalid-threshold", type=float, default=0.5)
+    parser.add_argument("--score-decay", type=float, default=0.8)
+    parser.add_argument("--score-step", type=float, default=1.0)
+    parser.add_argument("--trigger-score", type=float, default=1.0)
+    parser.add_argument("--clear-ok-streak", type=int, default=3)
     args = parser.parse_args()
 
     task = TASKS[args.task]
@@ -167,6 +239,12 @@ if __name__ == "__main__":
         yolo_weights=args.yolo_weights,
         cls_weights=args.cls_weights or task.weights_path,
         output_path=args.output,
-        time_window=args.time_window,
         conf=args.conf,
+        ok_threshold=args.ok_threshold,
+        violation_threshold=args.violation_threshold,
+        invalid_threshold=args.invalid_threshold,
+        score_decay=args.score_decay,
+        score_step=args.score_step,
+        trigger_score=args.trigger_score,
+        clear_ok_streak=args.clear_ok_streak,
     )

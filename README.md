@@ -114,3 +114,19 @@ python ppe/training.py --task helmet --false-violation-penalty 3.0
 ```
 
 `false-violation-penalty` 越大，越保守，越不容易把合规报成违规。
+
+
+## 9. 线上误报控制（已在推理代码实现）
+
+为了避免把“已佩戴”误报成“未佩戴”，推理阶段采用保守判违规策略：
+
+- 只有 `P(violation) >= violation_threshold` 才记为违规候选（默认 0.95）
+- `P(ok) >= ok_threshold` 直接判合规
+- 其余全部为 `Detecting/Unknown`，避免误报
+- 轨迹级使用证据分数 `score`，达到 `trigger_score` 才最终告警
+
+示例：
+
+```bash
+python ppe/inference.py --task helmet --video your.mp4 --violation-threshold 0.97 --trigger-score 1.2
+```
