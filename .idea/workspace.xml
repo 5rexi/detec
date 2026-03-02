@@ -5,6 +5,7 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/annotate_helmet.py" beforeDir="false" afterPath="$PROJECT_DIR$/annotate_helmet.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/detect_helmet.py" beforeDir="false" afterPath="$PROJECT_DIR$/detect_helmet.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hamlet_detection.py" beforeDir="false" afterPath="$PROJECT_DIR$/hamlet_detection.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -62,7 +63,7 @@
       <workItem from="1770889528861" duration="2643000" />
       <workItem from="1772353187544" duration="7808000" />
       <workItem from="1772417349910" duration="4084000" />
-      <workItem from="1772430327859" duration="12663000" />
+      <workItem from="1772430327859" duration="14261000" />
     </task>
     <servers />
   </component>
