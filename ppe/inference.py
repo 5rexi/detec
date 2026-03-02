@@ -165,6 +165,7 @@ def run_video(
                 final_state = update_track_state(
                     track_scores=track_scores,
                     track_ok_streak=track_ok_streak,
+                    track_ng_streak=track_ng_streak,
                     track_id=track_id,
                     frame_state=frame_state,
                     score_decay=score_decay,
