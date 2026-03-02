@@ -8,6 +8,7 @@ if __name__ == "__main__":
         lr=1e-4,
         weight_decay=5e-4,
         class_weights=[1.0, 4.0, 1.0],
+        false_violation_penalty=3.0,
         dataset_root="dataset/helmet",
         save_path="weights/resnet_helmet.pth",
     )

@@ -99,3 +99,18 @@ python detect_vest.py
 - `model/resnet_train.py` -> 通过 `--task` 指定训练任务
 
 推荐优先使用新的显式脚本（`annotate_* / train_* / detect_*`）。
+
+## 8. 业务约束对应的训练策略（已在代码实现）
+
+为满足“不能把合规识别成违规，同时违规只要一帧命中即可”的目标，训练代码已引入**非对称损失**：
+
+- 基础损失：`CrossEntropyLoss`（可配置 `--class-weights`）
+- 额外罚项：当 GT 为合规类别时，显式惩罚模型对违规类别的预测概率
+
+可通过参数调整强度：
+
+```bash
+python ppe/training.py --task helmet --false-violation-penalty 3.0
+```
+
+`false-violation-penalty` 越大，越保守，越不容易把合规报成违规。

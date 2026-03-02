@@ -12,6 +12,11 @@ from model.resnet import HeadHelmetResNet
 from ppe.tasks import TASKS
 
 
+COMPLIANT_CLASS = 0
+VIOLATION_CLASS = 1
+INVALID_CLASS = 2
+
+
 class PPEClassificationDataset(Dataset):
     def __init__(self, root: str, class_names: List[str], transform=None):
         self.samples = []
@@ -39,6 +44,42 @@ class PPEClassificationDataset(Dataset):
         return image, label
 
 
+class AsymmetricPPELoss(nn.Module):
+    """
+    目标：
+    1) 严格惩罚“合规 -> 违规”误判（业务强约束）
+    2) 保持对“违规样本”召回的学习能力
+
+    实现方式：
+    - 基础项：CrossEntropyLoss（支持 class_weight）
+    - 额外项：当 GT=合规 时，额外惩罚模型对违规类的概率
+    """
+
+    def __init__(self, class_weights: List[float], false_violation_penalty: float):
+        super().__init__()
+        self.false_violation_penalty = false_violation_penalty
+        if class_weights:
+            weight_tensor = torch.tensor(class_weights, dtype=torch.float32)
+            self.base_ce = nn.CrossEntropyLoss(weight=weight_tensor)
+        else:
+            self.base_ce = nn.CrossEntropyLoss()
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        ce_loss = self.base_ce(logits, labels)
+
+        probs = torch.softmax(logits, dim=1)
+        compliant_mask = labels == COMPLIANT_CLASS
+
+        if compliant_mask.any():
+            # 仅在 GT=合规时，对“预测违规概率”增加罚项，降低误报违规
+            violation_probs = probs[compliant_mask, VIOLATION_CLASS]
+            penalty_loss = violation_probs.mean()
+        else:
+            penalty_loss = torch.tensor(0.0, device=logits.device)
+
+        return ce_loss + self.false_violation_penalty * penalty_loss
+
+
 def train_task(
     task_name: str,
     epochs: int,
@@ -46,6 +87,7 @@ def train_task(
     lr: float,
     weight_decay: float,
     class_weights: List[float],
+    false_violation_penalty: float,
     dataset_root: str,
     save_path: str,
 ) -> None:
@@ -65,11 +107,10 @@ def train_task(
     model = HeadHelmetResNet(num_classes=len(task.class_names)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    if class_weights:
-        weight_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
-        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-    else:
-        criterion = nn.CrossEntropyLoss()
+    criterion = AsymmetricPPELoss(
+        class_weights=class_weights,
+        false_violation_penalty=false_violation_penalty,
+    ).to(device)
 
     best_loss = float("inf")
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -107,6 +148,12 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--class-weights", nargs="*", type=float, default=[])
+    parser.add_argument(
+        "--false-violation-penalty",
+        type=float,
+        default=3.0,
+        help="Extra penalty weight for compliant->violation false alarms.",
+    )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--save-path", default=None)
     args = parser.parse_args()
@@ -119,6 +166,7 @@ if __name__ == "__main__":
         lr=args.lr,
         weight_decay=args.weight_decay,
         class_weights=args.class_weights,
+        false_violation_penalty=args.false_violation_penalty,
         dataset_root=args.dataset_root or task.dataset_root,
         save_path=args.save_path or task.weights_path,
     )
