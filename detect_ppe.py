@@ -251,12 +251,16 @@ def main():
             h_ng = helmet_final[tid] == STATE_NG
             v_ng = vest_final[tid] == STATE_NG
 
+            head_img = latest_head_crop.get(tid)
+            torso_img = latest_torso_crop.get(tid)
+
             if h_ng and v_ng:
-                no_both_items.append((tid, latest_head_crop.get(tid) or latest_torso_crop.get(tid)))
+                chosen = head_img if head_img is not None else torso_img
+                no_both_items.append((tid, chosen))
             elif h_ng:
-                no_helmet_items.append((tid, latest_head_crop.get(tid)))
+                no_helmet_items.append((tid, head_img))
             elif v_ng:
-                no_vest_items.append((tid, latest_torso_crop.get(tid)))
+                no_vest_items.append((tid, torso_img))
 
         panel = np.zeros((frame_h, panel_w, 3), dtype=np.uint8)
         draw_column(panel, 0, col_w, "No Helmet", (0, 102, 255), no_helmet_items, frame_h)
