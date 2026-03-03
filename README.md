@@ -1,11 +1,12 @@
 # PPE Detection (Helmet & Reflective Vest)
 
-本项目已按任务拆分为**两条独立流程**：
+本项目当前仅保留并维护以下核心流程：
 
-- 头盔流程（标注 / 训练 / 推理）
-- 反光衣流程（标注 / 训练 / 推理）
+- `annotate_helmet.py` / `annotate_vest.py`：标注
+- `train_helmet.py` / `train_vest.py`：训练
+- `detect_helmet.py` / `detect_vest.py` / `detect_ppe.py`：推理
 
-这样可以避免“二合一标注”和脚本耦合导致的维护困难。
+---
 
 ## 1. 安装
 
@@ -13,120 +14,167 @@
 pip install -r requirements.txt
 ```
 
-## 2. 数据目录规范（已拆分）
+---
 
-### 头盔数据集
+## 2. Pipeline 总览
+
+### 2.1 标注阶段（按任务拆分）
+
+- 使用 YOLO 人体检测（`classes=[0]`）先定位人。
+- 基于人体框做规则裁剪：
+  - 头盔任务：裁剪头部区域
+  - 反光衣任务：裁剪上半身区域
+- 仅保存有效 crop，按键标注：
+  - `1`：合规（with）
+  - `2`：违规（without）
+  - `3`：invalid
+  - `q`：退出
+
+数据目录：
 
 ```text
 dataset/helmet/
   with_helmet/
   without_helmet/
   invalid/
-```
 
-### 反光衣数据集
-
-```text
 dataset/vest/
   with_vest/
   without_vest/
   invalid/
 ```
 
-## 3. 标注（分开执行）
-
-### 标注头盔
+运行：
 
 ```bash
 python annotate_helmet.py
-```
-
-### 标注反光衣
-
-```bash
 python annotate_vest.py
 ```
 
-> 交互按键：`1=合规`，`2=违规`，`3=无效`，`q=退出`
+---
 
-## 4. 训练（分开执行）
+### 2.2 训练阶段（分类模型）
 
-### 训练头盔分类器
+模型为 `HeadHelmetResNet(num_classes=3)`，类别顺序固定为：
+
+- helmet: `[with_helmet, without_helmet, invalid]`
+- vest: `[with_vest, without_vest, invalid]`
+
+训练核心 trick：
+
+1. **类别权重（class_weights）**：提高违规类别学习强度。
+2. **非对称惩罚（false_violation_penalty）**：
+   - 在 GT 为合规时，额外惩罚预测为违规的概率；
+   - 目标是尽量避免“把合规误报为违规”。
+
+默认训练参数：
+
+- `epochs=40`
+- `batch_size=32`
+- `lr=1e-4`
+- `weight_decay=5e-4`
+- helmet: `class_weights=[1.0, 2.0, 1.0]`
+- vest: `class_weights=[1.0, 4.0, 1.0]`
+- `false_violation_penalty=3.0`
+
+运行：
 
 ```bash
 python train_helmet.py
-```
-
-### 训练反光衣分类器
-
-```bash
 python train_vest.py
 ```
 
-默认输出权重：
+输出权重：
 
 - `weights/resnet_helmet.pth`
 - `weights/resnet_vest.pth`
 
-## 5. 应用（分开执行）
+---
 
-### 头盔检测
+### 2.3 推理阶段（单任务）
+
+单任务推理脚本：
 
 ```bash
 python detect_helmet.py
-```
-
-### 反光衣检测
-
-```bash
 python detect_vest.py
 ```
 
-## 6. 新增模块说明
+关键机制（减少误报）：
 
-- `ppe/tasks.py`：任务配置中心（类别名、裁剪函数、默认路径）
-- `ppe/annotation.py`：统一标注逻辑（按任务参数化）
-- `ppe/training.py`：统一训练逻辑（按任务参数化）
-- `ppe/inference.py`：统一视频推理逻辑（按任务参数化）
+1. **阈值分层决策**
+   - `ok_threshold`：合规阈值
+   - `violation_threshold`：违规阈值（通常更高）
+   - `invalid_threshold`：invalid 阈值
+2. **轨迹级证据累积**
+   - `score_decay`：历史衰减
+   - `score_step`：违规帧加分
+   - `trigger_score`：触发告警分数
+   - `min_violation_streak`：最小连续违规帧
+   - `clear_ok_streak`：连续合规后清空证据
 
-## 7. 兼容旧脚本
+这套策略能缓解短时抖动、遮挡和 `invalid` 带来的误触发。
 
-以下旧脚本仍可运行，但已改为调用新的拆分逻辑：
+---
 
-- `hamlet_detection.py` -> 头盔检测
-- `clothing_detection.py` -> 反光衣检测
-- `dataset_maker.py` -> 通过 `--task` 指定标注任务
-- `model/resnet_train.py` -> 通过 `--task` 指定训练任务
+### 2.4 推理阶段（头盔+反光衣联合）
 
-推荐优先使用新的显式脚本（`annotate_* / train_* / detect_*`）。
-
-## 8. 业务约束对应的训练策略（已在代码实现）
-
-为满足“不能把合规识别成违规，同时违规只要一帧命中即可”的目标，训练代码已引入**非对称损失**：
-
-- 基础损失：`CrossEntropyLoss`（可配置 `--class-weights`）
-- 额外罚项：当 GT 为合规类别时，显式惩罚模型对违规类别的预测概率
-
-可通过参数调整强度：
+新增脚本：
 
 ```bash
-python ppe/training.py --task helmet --false-violation-penalty 3.0
+python detect_ppe.py
 ```
 
-`false-violation-penalty` 越大，越保守，越不容易把合规报成违规。
+功能：
 
+- 同时运行头盔分类与反光衣分类。
+- 右侧三列实时展示：
+  1. `No Helmet`
+  2. `No Vest`
+  3. `No Helmet + No Vest`
+- 自动处理状态迁移：
+  - 若某 ID 先进入 `No Helmet`，后续又确认 `No Vest`，会**自动从第一列移除并加入第三列**。
 
-## 9. 线上误报控制（已在推理代码实现）
+说明：
 
-为了避免把“已佩戴”误报成“未佩戴”，推理阶段采用保守判违规策略：
+- 由于有较长 `invalid/unknown` 阶段，联合脚本采用“每帧重算归属列”的方式，确保最终列归属与当前证据一致。
 
-- 只有 `P(violation) >= violation_threshold` 才记为违规候选（默认 0.95）
-- `P(ok) >= ok_threshold` 直接判合规
-- 其余全部为 `Detecting/Unknown`，避免误报
-- 轨迹级使用证据分数 `score`，达到 `trigger_score` 且连续违规帧数达到 `min_violation_streak` 才最终告警
+---
 
-示例：
+## 3. 可调参数建议
 
-```bash
-python ppe/inference.py --task helmet --video your.mp4 --violation-threshold 0.97 --trigger-score 1.2 --min-violation-streak 3
+- 现场误报偏多：
+  - 提高 `violation_threshold`
+  - 提高 `min_violation_streak`
+  - 提高 `trigger_score`
+- 漏报偏多：
+  - 适当降低 `violation_threshold`
+  - 降低 `min_violation_streak`
+- 训练阶段若“合规被误判违规”：
+  - 增大 `false_violation_penalty`
+  - 适当上调违规类/合规类权重比例做平衡
+
+---
+
+## 4. 当前代码结构（精简后）
+
+```text
+annotate_helmet.py
+annotate_vest.py
+train_helmet.py
+train_vest.py
+detect_helmet.py
+detect_vest.py
+detect_ppe.py
+ppe/
+  annotation.py
+  training.py
+  inference.py
+  tasks.py
+model/
+  resnet.py
+  resnet_data.py
+  utils.py
+README.md
+requirements.txt
 ```
