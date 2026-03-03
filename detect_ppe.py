@@ -75,7 +75,7 @@ def draw_column(canvas, x0, width, title, color, items, frame_h):
             break
 
         resized = cv2.resize(img, (width, h))
-        canvas[y:y + h, x0:x0 + width] = resized
+        canvas[y : y + h, x0 : x0 + width] = resized
         cv2.putText(canvas, f"ID {tid}", (x0 + 5, y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         y += h + 12
 
@@ -87,6 +87,7 @@ def main():
     vest_weights = "weights/resnet_vest.pth"
     output_path = "output_ppe.mp4"
 
+    # 与 detect_helmet / detect_vest 保持一致
     conf = 0.5
     ok_threshold = 0.6
     violation_threshold = 0.95
@@ -143,8 +144,10 @@ def main():
     helmet_final = defaultdict(lambda: STATE_UNKNOWN)
     vest_final = defaultdict(lambda: STATE_UNKNOWN)
 
-    latest_head_crop = {}
-    latest_torso_crop = {}
+    # 固定快照画廊：一旦命中违规即固定，不随之后帧变化
+    helmet_gallery = {}
+    vest_gallery = {}
+    both_gallery = {}
 
     while cap.isOpened():
         ok, frame = cap.read()
@@ -152,7 +155,6 @@ def main():
             break
 
         results = detector.track(frame, persist=True, classes=[0], conf=conf)
-        active_ids = set()
 
         if results and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
@@ -160,18 +162,11 @@ def main():
 
             for bbox, track_id in zip(boxes, ids):
                 track_id = int(track_id)
-                active_ids.add(track_id)
-
                 if extract_valid_head(frame, bbox) is None:
                     continue
 
                 head_crop = crop_head_from_bbox(frame, bbox)
                 torso_crop = crop_torso_from_bbox(frame, bbox)
-
-                if head_crop is not None:
-                    latest_head_crop[track_id] = head_crop
-                if torso_crop is not None:
-                    latest_torso_crop[track_id] = torso_crop
 
                 if head_crop is None:
                     helmet_frame_state = STATE_UNKNOWN
@@ -218,6 +213,28 @@ def main():
                 h_state = helmet_final[track_id]
                 v_state = vest_final[track_id]
 
+                if h_state == STATE_NG and track_id not in helmet_gallery and track_id not in both_gallery and head_crop is not None:
+                    helmet_gallery[track_id] = head_crop
+
+                if v_state == STATE_NG and track_id not in vest_gallery and track_id not in both_gallery and torso_crop is not None:
+                    vest_gallery[track_id] = torso_crop
+
+                # 发现双违规后：把头盔图迁移到双违规列，并删除反光衣列图片
+                if h_state == STATE_NG and v_state == STATE_NG:
+                    if track_id not in both_gallery:
+                        both_img = helmet_gallery.get(track_id)
+                        if both_img is None and head_crop is not None:
+                            both_img = head_crop
+                        if both_img is None:
+                            both_img = vest_gallery.get(track_id)
+                        if both_img is None:
+                            both_img = torso_crop
+                        if both_img is not None:
+                            both_gallery[track_id] = both_img
+
+                    helmet_gallery.pop(track_id, None)
+                    vest_gallery.pop(track_id, None)
+
                 x1, y1, x2, y2 = map(int, bbox)
                 if h_state == STATE_NG and v_state == STATE_NG:
                     color = (0, 0, 255)
@@ -243,29 +260,10 @@ def main():
                     2,
                 )
 
-        no_helmet_items = []
-        no_vest_items = []
-        no_both_items = []
-
-        for tid in sorted(active_ids):
-            h_ng = helmet_final[tid] == STATE_NG
-            v_ng = vest_final[tid] == STATE_NG
-
-            head_img = latest_head_crop.get(tid)
-            torso_img = latest_torso_crop.get(tid)
-
-            if h_ng and v_ng:
-                chosen = head_img if head_img is not None else torso_img
-                no_both_items.append((tid, chosen))
-            elif h_ng:
-                no_helmet_items.append((tid, head_img))
-            elif v_ng:
-                no_vest_items.append((tid, torso_img))
-
         panel = np.zeros((frame_h, panel_w, 3), dtype=np.uint8)
-        draw_column(panel, 0, col_w, "No Helmet", (0, 102, 255), no_helmet_items, frame_h)
-        draw_column(panel, col_w, col_w, "No Vest", (255, 102, 0), no_vest_items, frame_h)
-        draw_column(panel, col_w * 2, col_w, "No Helmet + No Vest", (0, 0, 255), no_both_items, frame_h)
+        draw_column(panel, 0, col_w, "No Helmet", (0, 102, 255), list(helmet_gallery.items()), frame_h)
+        draw_column(panel, col_w, col_w, "No Vest", (255, 102, 0), list(vest_gallery.items()), frame_h)
+        draw_column(panel, col_w * 2, col_w, "No Helmet + No Vest", (0, 0, 255), list(both_gallery.items()), frame_h)
 
         vis = np.hstack([frame, panel])
         writer.write(vis)
