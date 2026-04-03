@@ -1,6 +1,44 @@
 import cv2
 import numpy as np
 
+
+def should_skip_person_bbox(
+    frame_shape,
+    bbox,
+    edge_margin_ratio=0.01,
+    min_bbox_w=45,
+    min_bbox_h=90,
+    min_bbox_area_ratio=0.008,
+):
+    """
+    是否跳过当前人物框（不做 PPE 检测）：
+    1) 人物框贴近画面边缘（容易出现半身）
+    2) 人物框过小（细节不足，误判风险高）
+    """
+    img_h, img_w = frame_shape[:2]
+    x1, y1, x2, y2 = map(float, bbox)
+    bw = x2 - x1
+    bh = y2 - y1
+    if bw <= 0 or bh <= 0:
+        return True
+
+    edge_margin = max(5, int(min(img_h, img_w) * edge_margin_ratio))
+    touching_edge = (
+        x1 <= edge_margin
+        or y1 <= edge_margin
+        or x2 >= img_w - edge_margin
+        or y2 >= img_h - edge_margin
+    )
+    if touching_edge:
+        return True
+
+    area_ratio = (bw * bh) / max(1.0, float(img_w * img_h))
+    if bw < min_bbox_w or bh < min_bbox_h or area_ratio < min_bbox_area_ratio:
+        return True
+
+    return False
+
+
 def crop_head_from_bbox(frame, bbox, min_size=40):
     """
     frame: np.ndarray, shape (H, W, 3)
