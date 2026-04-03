@@ -81,7 +81,7 @@ def draw_column(canvas, x0, width, title, color, items, frame_h):
 
 
 def main():
-    video_path = "./origin_data/video(10).mp4"
+    video_path = "./origin_data/test.mp4"
     yolo_weights = "weights/yolo11n.pt"
     helmet_weights = "weights/resnet_helmet.pth"
     vest_weights = "weights/resnet_vest.pth"
