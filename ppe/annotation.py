@@ -5,7 +5,7 @@ import time
 import cv2
 from ultralytics import YOLO
 
-from model.utils import extract_valid_head
+from model.utils import extract_valid_head, should_skip_person_bbox
 from ppe.tasks import TASKS
 
 
@@ -37,6 +37,8 @@ def annotate_video(task_name: str, video_path: str, yolo_weights: str, save_ever
             continue
 
         for bbox in results[0].boxes.xyxy:
+            if should_skip_person_bbox(frame.shape, bbox):
+                continue
             if extract_valid_head(frame, bbox) is None:
                 continue
 

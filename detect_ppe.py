@@ -6,7 +6,7 @@ from torchvision import transforms
 from ultralytics import YOLO
 
 from model.resnet import HeadHelmetResNet
-from model.utils import crop_head_from_bbox, crop_torso_from_bbox, extract_valid_head
+from model.utils import crop_head_from_bbox, crop_torso_from_bbox, extract_valid_head, should_skip_person_bbox
 
 STATE_OK = 0
 STATE_NG = 1
@@ -162,6 +162,8 @@ def main():
 
             for bbox, track_id in zip(boxes, ids):
                 track_id = int(track_id)
+                if should_skip_person_bbox(frame.shape, bbox):
+                    continue
                 if extract_valid_head(frame, bbox) is None:
                     continue
 

@@ -8,7 +8,7 @@ from torchvision import transforms
 from ultralytics import YOLO
 
 from model.resnet import HeadHelmetResNet
-from model.utils import extract_valid_head
+from model.utils import extract_valid_head, should_skip_person_bbox
 from ppe.tasks import TASKS
 
 
@@ -145,6 +145,8 @@ def run_video(
 
             for bbox, track_id in zip(boxes, ids):
                 track_id = int(track_id)
+                if should_skip_person_bbox(frame.shape, bbox):
+                    continue
                 if extract_valid_head(frame, bbox) is None:
                     continue
 
